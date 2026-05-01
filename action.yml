@@ -1,0 +1,24 @@
+name: 'envdrift'
+description: 'Detect drift between .env files. Zero deps.'
+author: 'ChronoKairo'
+branding:
+  icon: 'alert-triangle'
+  color: 'yellow'
+inputs:
+  files:
+    description: 'Space-separated list of env files to compare (need 2+).'
+    required: true
+    default: '.env.example .env'
+  strict:
+    description: 'Also flag empty/placeholder values.'
+    required: false
+    default: 'false'
+runs:
+  using: 'composite'
+  steps:
+    - name: Run envdrift
+      shell: bash
+      run: |
+        STRICT=""
+        if [ "${{ inputs.strict }}" = "true" ]; then STRICT="--strict"; fi
+        python3 "${{ github.action_path }}/envdrift.py" --ci $STRICT ${{ inputs.files }}

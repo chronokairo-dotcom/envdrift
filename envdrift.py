@@ -14,14 +14,19 @@ Exit codes:
 Usage:
   envdrift .env.example .env
   envdrift .env.example .env .env.local --strict
+  envdrift --json .env.example .env
+  envdrift --ci   .env.example .env   # GitHub Actions annotations
   envdrift --help
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+__version__ = "0.2.0"
 
 PLACEHOLDER_VALUES = {"", "changeme", "todo", "xxx", "your-key-here", "<your-key>"}
 
@@ -56,44 +61,82 @@ def parse_env(path: Path) -> Tuple[Dict[str, str], List[str]]:
     return keys, dupes
 
 
-def report(files: List[Path], strict: bool) -> int:
+def analyze(files: List[Path], strict: bool) -> dict:
+    """Return a structured drift report."""
     parsed = [(p, *parse_env(p)) for p in files]
     all_keys: set[str] = set()
     for _, ks, _ in parsed:
         all_keys.update(ks.keys())
 
+    per_file = []
     drift = False
-    print(f"envdrift: comparing {len(files)} file(s), {len(all_keys)} unique key(s)\n")
-
-    # Missing keys per file
     for path, ks, dupes in parsed:
         missing = sorted(all_keys - ks.keys())
-        if missing:
+        dup_unique = sorted(set(dupes))
+        placeholders = []
+        if strict:
+            placeholders = sorted(
+                k for k, v in ks.items() if v.lower() in PLACEHOLDER_VALUES
+            )
+        if missing or dup_unique or placeholders:
             drift = True
+        per_file.append(
+            {
+                "file": str(path),
+                "missing": missing,
+                "duplicates": dup_unique,
+                "placeholders": placeholders,
+            }
+        )
+
+    return {
+        "files": [str(p) for p in files],
+        "unique_keys": sorted(all_keys),
+        "drift": drift,
+        "results": per_file,
+    }
+
+
+def render_human(report: dict) -> None:
+    print(
+        f"envdrift: comparing {len(report['files'])} file(s), "
+        f"{len(report['unique_keys'])} unique key(s)\n"
+    )
+    for entry in report["results"]:
+        path = entry["file"]
+        if entry["missing"]:
             print(f"  [missing in {path}]")
-            for k in missing:
+            for k in entry["missing"]:
                 print(f"    - {k}")
-        if dupes:
-            drift = True
+        if entry["duplicates"]:
             print(f"  [duplicates in {path}]")
-            for k in sorted(set(dupes)):
+            for k in entry["duplicates"]:
                 print(f"    - {k}")
-
-    # Placeholder / empty values (strict mode)
-    if strict:
-        for path, ks, _ in parsed:
-            bad = [k for k, v in ks.items() if v.lower() in PLACEHOLDER_VALUES]
-            if bad:
-                drift = True
-                print(f"  [placeholder values in {path}]")
-                for k in sorted(bad):
-                    print(f"    - {k} = {ks[k]!r}")
-
-    if not drift:
+        if entry["placeholders"]:
+            print(f"  [placeholder values in {path}]")
+            for k in entry["placeholders"]:
+                print(f"    - {k}")
+    if report["drift"]:
+        print("\nenvdrift: drift detected")
+    else:
         print("  ok — no drift detected :>")
-        return 0
-    print("\nenvdrift: drift detected")
-    return 1
+
+
+def render_ci(report: dict) -> None:
+    """Emit GitHub Actions workflow command annotations.
+
+    See: https://docs.github.com/actions/reference/workflow-commands-for-github-actions
+    """
+    for entry in report["results"]:
+        path = entry["file"]
+        for k in entry["missing"]:
+            print(f"::error file={path}::envdrift: missing key {k}")
+        for k in entry["duplicates"]:
+            print(f"::warning file={path}::envdrift: duplicate key {k}")
+        for k in entry["placeholders"]:
+            print(f"::warning file={path}::envdrift: placeholder value for {k}")
+    if not report["drift"]:
+        print("::notice::envdrift: no drift detected")
 
 
 def main(argv: List[str] | None = None) -> int:
@@ -107,14 +150,31 @@ def main(argv: List[str] | None = None) -> int:
         action="store_true",
         help="also flag empty/placeholder values (changeme, todo, xxx, ...)",
     )
-    p.add_argument("--version", action="version", version="envdrift 0.1.0")
+    fmt = p.add_mutually_exclusive_group()
+    fmt.add_argument("--json", action="store_true", help="emit JSON report to stdout")
+    fmt.add_argument(
+        "--ci",
+        action="store_true",
+        help="emit GitHub Actions error/warning annotations",
+    )
+    p.add_argument("--version", action="version", version=f"envdrift {__version__}")
     args = p.parse_args(argv)
 
     if len(args.files) < 2:
         print("envdrift: need at least 2 files to compare", file=sys.stderr)
         return 2
 
-    return report([Path(f) for f in args.files], args.strict)
+    report = analyze([Path(f) for f in args.files], args.strict)
+
+    if args.json:
+        json.dump(report, sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+    elif args.ci:
+        render_ci(report)
+    else:
+        render_human(report)
+
+    return 1 if report["drift"] else 0
 
 
 if __name__ == "__main__":

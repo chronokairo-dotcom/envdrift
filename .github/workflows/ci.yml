@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.8', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Self-check examples (drift expected)
+        run: |
+          set +e
+          python3 envdrift.py --ci examples/.env.example examples/.env
+          rc=$?
+          if [ "$rc" != "1" ]; then echo "expected exit 1, got $rc"; exit 1; fi

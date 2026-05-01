@@ -1,6 +1,8 @@
 # envdrift
 
-> Detect drift between `.env` files. Zero dependencies. One file. ~100 lines.
+> Detect drift between `.env` files. Zero dependencies. One file. ~150 lines.
+
+[![ci](https://github.com/chronokairo-dotcom/envdrift/actions/workflows/ci.yml/badge.svg)](https://github.com/chronokairo-dotcom/envdrift/actions/workflows/ci.yml)
 
 The classic "works on my machine" bug: someone added `STRIPE_KEY` to their `.env` but forgot to update `.env.example`, and now CI is broken. **envdrift** is a tiny CLI that catches this in about a second.
 
@@ -49,6 +51,34 @@ envdrift: drift detected
 ```
 
 Exit codes: `0` clean, `1` drift, `2` usage error — pipeline-friendly.
+
+### JSON / CI output
+
+```bash
+envdrift --json .env.example .env       # machine-readable report
+envdrift --ci   .env.example .env       # GitHub Actions ::error::/::warning::
+```
+
+## GitHub Action
+
+Drop into any workflow:
+
+```yaml
+- uses: chronokairo-dotcom/envdrift@main
+  with:
+    files: '.env.example .env'
+    strict: 'true'
+```
+
+Fails the build (exit 1) when keys drift, with inline annotations on the offending file.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+No deps, runs on Python 3.8+.
 
 ## Pre-commit hook
 
